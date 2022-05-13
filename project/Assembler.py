@@ -1,9 +1,11 @@
-import sys
 import re
+import sys
+from collections import OrderedDict
 from enum import IntEnum
-from io import TextIOWrapper
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, TextIO
+
+from BaseUtils import BaseParser
 
 SYMBOL_PATTERN = re.compile(r'[a-zA-Z_.$:][0-9a-zA-Z_.$:]*')
 COMP_PATTERN = re.compile(r'([AMD]*=)?(?P<comp>[ADM+\-&!01|]+)(;[A-Z]+)?')
@@ -54,34 +56,11 @@ class SymbolTable:
         return self.table[symbol]
 
 
-class Parser:
+class Parser(BaseParser):
 
-    def __init__(self, asm_object: TextIOWrapper):
-        self.asm_object = asm_object
+    def __init__(self, asm_object: TextIO):
+        super().__init__(asm_object)
         self.current_cmd = None
-        self.current_line = None
-
-    def has_more_commands(self) -> bool:
-        try:
-            while True:
-                asm_line = next(self.asm_object)
-                asm_line = asm_line.strip()
-                if not asm_line:
-                    continue
-                if (index := asm_line.find("//")) >= 0:
-                    if index == 0:
-                        continue
-                    else:
-                        asm_line = asm_line.split("//")[0].strip()
-
-                self.current_line = asm_line
-                break
-        except StopIteration:
-            return False
-        except Exception as error:
-            print(f"Get error {error}")
-            raise error
-        return True
 
     def advance(self):
         self.current_cmd = self.current_line
@@ -112,7 +91,7 @@ class Parser:
             return None
 
     @property
-    def comp(self) -> str:
+    def comp(self) -> Optional[str]:
         if match := COMP_PATTERN.match(self.current_cmd):
             return match.groupdict()['comp']
         else:
@@ -139,47 +118,47 @@ class Code:
     }
 
     COMP_TABLE = {
-        '0'     : '0101010',
-        '1'     : '0111111',
-        '-1'    : '0111010',
-        'D'     : '0001100',
-        'A'     : '0110000',
-        'M'     : '1110000',
-        '!D'    : '0001101',
-        '!A'    : '0110001',
-        '!M'    : '1110001',
-        '-D'    : '0001111',
-        '-A'    : '0110011',
-        '-M'    : '1110011',
-        'D+1'   : '0011111',
-        '1+D'   : '0011111',
-        'A+1'   : '0110111',
-        '1+A'   : '0110111',
-        'M+1'   : '1110111',
-        '1+M'   : '1110111',
-        'D-1'   : '0001110',
-        'A-1'   : '0110010',
-        'M-1'   : '1110010',
-        'D+A'   : '0000010',
-        'A+D'   : '0000010',
-        'D+M'   : '1000010',
-        'M+D'   : '1000010',
-        'D-A'   : '0010011',
-        'D-M'   : '1010011',
-        'A-D'   : '0000111',
-        'M-D'   : '1000111',
-        'D&A'   : '0000000',
-        'A&D'   : '0000000',
-        'D&M'   : '1000000',
-        'M&D'   : '1000000',
-        'D|A'   : '0010101',
-        'A|D'   : '0010101',
-        'D|M'   : '1010101',
-        'M|D'   : '1010101',
+        '0': '0101010',
+        '1': '0111111',
+        '-1': '0111010',
+        'D': '0001100',
+        'A': '0110000',
+        'M': '1110000',
+        '!D': '0001101',
+        '!A': '0110001',
+        '!M': '1110001',
+        '-D': '0001111',
+        '-A': '0110011',
+        '-M': '1110011',
+        'D+1': '0011111',
+        '1+D': '0011111',
+        'A+1': '0110111',
+        '1+A': '0110111',
+        'M+1': '1110111',
+        '1+M': '1110111',
+        'D-1': '0001110',
+        'A-1': '0110010',
+        'M-1': '1110010',
+        'D+A': '0000010',
+        'A+D': '0000010',
+        'D+M': '1000010',
+        'M+D': '1000010',
+        'D-A': '0010011',
+        'D-M': '1010011',
+        'A-D': '0000111',
+        'M-D': '1000111',
+        'D&A': '0000000',
+        'A&D': '0000000',
+        'D&M': '1000000',
+        'M&D': '1000000',
+        'D|A': '0010101',
+        'A|D': '0010101',
+        'D|M': '1010101',
+        'M|D': '1010101',
     }
 
     @classmethod
-    def dest(cls, cmd: Optional[str]) -> Tuple[str, str, str]:
+    def dest(cls, cmd: Optional[str]) -> str:
         if cmd is None:
             return '000'
         d1 = '1' if 'A' in cmd else '0'
@@ -188,7 +167,7 @@ class Code:
         return f"{d1}{d2}{d3}"
 
     @classmethod
-    def comp(cls, cmd: str) -> Tuple[str, str, str, str, str, str, str]:
+    def comp(cls, cmd: str) -> str:
         # 没发现规律,简单粗暴方案
         return cls.COMP_TABLE[cmd]
 
@@ -211,23 +190,26 @@ class Assembler:
         asm_object = open(self.asm_file)
         self.parser = Parser(asm_object)
         pc_count = 0
-        address_count = 1024
+
+        value_table = OrderedDict()
 
         while self.parser.has_more_commands():
             self.parser.advance()
             command_type = self.parser.command_type
             if command_type == CommandType.A_COMMAND:
                 if symbol := SYMBOL_PATTERN.match(self.parser.symbol):
-                    if not self.symbol_table.contains(symbol.string):
-                        self.symbol_table.add_entry(symbol.string, address_count)
-                        # 该符号可能是个地址label,但是要后续才能知道，这里先当变量赋地址,
-                        # 后续如果如何是标签会覆盖,但为浪费一个变量地址.这里不做优化了
-                        address_count += 1
+                    if symbol.string not in value_table and not self.symbol_table.contains(symbol.string):
+                        value_table[symbol.string] = 1
             elif command_type == CommandType.L_COMMAND:
                 self.symbol_table.add_entry(self.parser.symbol, pc_count)
+                value_table.pop(self.parser.symbol, None)
                 continue
-
             pc_count += 1
+
+        address_count = 16
+        for key in value_table:
+            self.symbol_table.add_entry(key, address_count)
+            address_count += 1
 
         asm_object.close()
 
