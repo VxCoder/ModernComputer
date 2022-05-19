@@ -1,7 +1,10 @@
+import argparse
 import sys
 from enum import IntEnum
 from pathlib import Path
-from typing import TextIO, Dict
+from typing import TextIO, Dict, List, Tuple
+
+from IPython.core.release import description
 
 from BaseUtils import BaseParser
 
@@ -94,28 +97,27 @@ class Parser(BaseParser):
         self.current_cmd = self.current_line
 
     def command_type(self) -> CommandType:
-        if self.current_cmd.find("push") >= 0:
+        if self.current_cmd.find("push") == 0:
             return CommandType.C_PUSH
-        elif self.current_cmd.find("pop") >= 0:
+        elif self.current_cmd.find("pop") == 0:
             return CommandType.C_POP
-        elif self.current_cmd.find("label") >= 0:
+        elif self.current_cmd.find("label") == 0:
             return CommandType.C_LABEL
-        elif self.current_cmd.find("goto") >= 0:
+        elif self.current_cmd.find("goto") == 0:
             return CommandType.C_GOTO
-        elif self.current_cmd.find("if-goto") >= 0:
+        elif self.current_cmd.find("if-goto") == 0:
             return CommandType.C_IF
-        elif self.current_cmd.find("function") >= 0:
+        elif self.current_cmd.find("function") == 0:
             return CommandType.C_FUNCTION
-        elif self.current_cmd.find("call") >= 0:
+        elif self.current_cmd.find("call") == 0:
             return CommandType.C_CALL
-        elif self.current_cmd.find("return") >= 0:
+        elif self.current_cmd.find("return") == 0:
             return CommandType.C_RETURN
         else:
             return CommandType.C_ARITHMETIC
 
-    def arg1(self) -> SegmentType:
-        result_str = self.current_cmd.split()[1]
-        result = Str2SegmentTypeMap[result_str]
+    def arg1(self) -> str:
+        result = self.current_cmd.split()[1]
         return result
 
     def arg2(self) -> str:
@@ -127,9 +129,13 @@ class CodeWriter:
 
     def __init__(self, asm_file: str):
         self.asm_file = asm_file
-        self.asm_filename = Path(self.asm_file).stem
         self.asm_obj = open(self.asm_file, "w")
         self.label_count = 0
+        self.return_address_count = 0
+        self.asm_filename = None
+
+    def set_filename(self, filename: str):
+        self.asm_filename = filename
 
     @staticmethod
     def push_value_snippets(value="D") -> str:
@@ -182,6 +188,156 @@ class CodeWriter:
         ]
         return "\n".join(commands)
 
+    def get_func_call_snippets(self, function_name: str, num_args: int):
+        return_address = f"return_address_{self.return_address_count}"
+        commands = [
+            # push return-address
+            f"@{return_address}",
+            "D=A",
+            self.push_value_snippets(),
+            # push LCL"
+            "@LCL",
+            "D=M",
+            self.push_value_snippets(),
+            # push ARG
+            "@ARG",
+            "D=M",
+            self.push_value_snippets(),
+            # push THIS
+            "@THIS",
+            "D=M",
+            self.push_value_snippets(),
+            # push THAT
+            "@THAT",
+            "D=M",
+            self.push_value_snippets(),
+            # ARG = SP-n-5
+            "@SP",
+            "D=M",
+            f"@{num_args}",
+            "D=D-A",
+            f"@5",
+            "D=D-A",
+            "@ARG",
+            "M=D",
+            # LCL = SP
+            "@SP",
+            "D=M",
+            "@LCL",
+            "M=D",
+            # goto f
+            f"@{function_name}",
+            "0;JMP",
+            f"({return_address})",
+        ]
+        self.return_address_count += 1
+        return "\n".join(commands)
+
+    def write_commands(self, asm_commands: List[str]):
+        write_commands = "\n".join(asm_commands) + "\n"
+        self.asm_obj.write(write_commands)
+
+    def write_init(self):
+        asm_commands = [
+            "@256",
+            "D=A",
+            "@SP",
+            "M=D",
+            self.get_func_call_snippets("Sys.init", 0),
+        ]
+        self.write_commands(asm_commands)
+
+    def write_label(self, label: str):
+        asm_commands = [
+            f"({label})",
+        ]
+        self.write_commands(asm_commands)
+
+    def write_goto(self, label: str):
+        asm_commands = [
+            f"@{label}",
+            "0;JMP",
+        ]
+        self.write_commands(asm_commands)
+
+    def write_if(self, label: str):
+        asm_commands = [
+            self.get_top_value_snippets(),
+            f"@{label}",
+            "D;JNE",
+        ]
+        self.write_commands(asm_commands)
+
+    def write_call(self, function_name: str, num_args: int):
+        self.asm_obj.write(self.get_func_call_snippets(function_name, num_args) + "\n")
+
+    def write_return(self):
+        asm_commands = [
+            # Frame = LCL
+            "@LCL",
+            "D=M",
+            "@FRAME",
+            "M=D",
+            # RET = *(FRAME - 5)
+            "@5",
+            "A=D-A",
+            "D=M",
+            "@RET",
+            "M=D",
+            # *ARG = pop()
+            self.get_top_value_snippets(),
+            "@ARG",
+            "A=M",
+            "M=D",
+            # SP = ARG+1
+            "@ARG",
+            "D=M+1",
+            "@SP",
+            "M=D",
+            # THAT = *(FRAME-1)
+            "@FRAME",
+            "A=M-1",
+            "D=M",
+            "@THAT",
+            "M=D",
+            # THIS = *(FRAME-2)
+            "@FRAME",
+            "D=M",
+            "@2",
+            "A=D-A",
+            "D=M",
+            "@THIS",
+            "M=D",
+            # ARG = *(FRAME-3)
+            "@FRAME",
+            "D=M",
+            "@3",
+            "A=D-A",
+            "D=M",
+            "@ARG",
+            "M=D",
+            # LCL = *(FRAME=4)
+            "@FRAME",
+            "D=M",
+            "@4",
+            "A=D-A",
+            "D=M",
+            "@LCL",
+            "M=D",
+            # goto RET
+            "@RET",
+            "A=M",
+            "0;JMP",
+
+        ]
+        self.write_commands(asm_commands)
+
+    def write_function(self, function_name: str, num_locals: int):
+        asm_commands = [
+            f"({function_name})",
+        ] + [self.push_value_snippets("0") for _ in range(num_locals)]
+        self.write_commands(asm_commands)
+
     def write_arithmetic(self, command: ArithmeticType):
         asm_commands = []
 
@@ -233,8 +389,7 @@ class CodeWriter:
                 self.push_value_snippets(),
             ]
 
-        write_commands = "\n".join(asm_commands) + "\n"
-        self.asm_obj.write(write_commands)
+        self.write_commands(asm_commands)
 
     def write_push_pop(self, command_type: CommandType, segment: SegmentType, index: int):
         asm_commands = []
@@ -309,8 +464,7 @@ class CodeWriter:
                     "M=D",
                 ]
 
-        write_commands = "\n".join(asm_commands) + "\n"
-        self.asm_obj.write(write_commands)
+        self.write_commands(asm_commands)
 
     def close(self):
         self.asm_obj.close()
@@ -318,25 +472,60 @@ class CodeWriter:
 
 class Vmtranslator:
 
-    def __init__(self, vm_file: str):
-        self.vm_file = vm_file
-        self.parser = Parser(open(self.vm_file))
-        self.asm_file = Path(vm_file).with_suffix(".asm")
+    @staticmethod
+    def handler_vm_file_or_dir(vm_file_or_dir: str) -> Tuple[str, List[Path]]:
+        vm_path = Path(vm_file_or_dir)
+        if vm_path.is_file():
+            return str(Path(vm_file_or_dir).with_suffix('.asm')), [Path(vm_file_or_dir)]
+        elif vm_path.is_dir():
+            vm_files = list(vm_path.glob("*.vm"))
+            asm_file_name = str(vm_path.with_suffix('.asm'))
+            return asm_file_name, vm_files
+
+    def __init__(self, vm_file_or_dir: str, bootstrap=True):
+        self.bootstrap = bootstrap
+        self.asm_file, self.vm_files = self.handler_vm_file_or_dir(vm_file_or_dir)
         self.code_writer = CodeWriter(self.asm_file)
+        self.parser = None
 
     def translator(self):
-        while self.parser.has_more_commands():
-            self.parser.advance()
-            self.code_writer.asm_obj.write(f"// vm command:{self.parser.current_cmd}\n")
-            command_type = self.parser.command_type()
-            if command_type in (CommandType.C_PUSH, CommandType.C_POP):
-                self.code_writer.write_push_pop(command_type, self.parser.arg1(), int(self.parser.arg2()))
-            elif command_type == CommandType.C_ARITHMETIC:
-                command = Str2ArithmeticMap[self.parser.current_cmd]
-                self.code_writer.write_arithmetic(command)
-            self.code_writer.asm_obj.write("\n")
+        if self.bootstrap:
+            self.code_writer.write_init()
+
+        for vm_file in self.vm_files:
+            self.parser = Parser(open(vm_file))
+            self.code_writer.set_filename(vm_file.stem)
+
+            while self.parser.has_more_commands():
+                self.parser.advance()
+                self.code_writer.asm_obj.write(f"// vm command:{self.parser.current_cmd}\n")
+                command_type = self.parser.command_type()
+                if command_type in (CommandType.C_PUSH, CommandType.C_POP):
+                    segment = Str2SegmentTypeMap[self.parser.arg1()]
+                    index = int(self.parser.arg2())
+                    self.code_writer.write_push_pop(command_type, segment, index)
+                elif command_type == CommandType.C_ARITHMETIC:
+                    command = Str2ArithmeticMap[self.parser.current_cmd]
+                    self.code_writer.write_arithmetic(command)
+                elif command_type == CommandType.C_LABEL:
+                    self.code_writer.write_label(self.parser.arg1())
+                elif command_type == CommandType.C_GOTO:
+                    self.code_writer.write_goto(self.parser.arg1())
+                elif command_type == CommandType.C_IF:
+                    self.code_writer.write_if(self.parser.arg1())
+                elif command_type == CommandType.C_RETURN:
+                    self.code_writer.write_return()
+                elif command_type == CommandType.C_FUNCTION:
+                    self.code_writer.write_function(self.parser.arg1(), int(self.parser.arg2()))
+                elif command_type == CommandType.C_CALL:
+                    self.code_writer.write_call(self.parser.arg1(), int(self.parser.arg2()))
+                self.code_writer.asm_obj.write("\n")
         self.code_writer.close()
 
 
 if __name__ == '__main__':
-    Vmtranslator(sys.argv[1]).translator()
+    parser = argparse.ArgumentParser(description="Vmtranslator")
+    parser.add_argument("vm_file_or_dir", type=str, help="vm file or dir path")
+    parser.add_argument('--no-bootstrap', '-n', help="don't add bootstrap code", action="store_true")
+    args = parser.parse_args()
+    Vmtranslator(args.vm_file_or_dir, not args.no_bootstrap).translator()
