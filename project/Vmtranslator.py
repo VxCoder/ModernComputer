@@ -1,10 +1,7 @@
 import argparse
-import sys
 from enum import IntEnum
 from pathlib import Path
 from typing import TextIO, Dict, List, Tuple
-
-from IPython.core.release import description
 
 from BaseUtils import BaseParser
 
