@@ -490,7 +490,8 @@ class Vmtranslator:
             self.code_writer.write_init()
 
         for vm_file in self.vm_files:
-            self.parser = Parser(open(vm_file))
+            vm_file_object = open(vm_file)
+            self.parser = Parser(vm_file_object)
             self.code_writer.set_filename(vm_file.stem)
 
             while self.parser.has_more_commands():
@@ -517,6 +518,7 @@ class Vmtranslator:
                 elif command_type == CommandType.C_CALL:
                     self.code_writer.write_call(self.parser.arg1(), int(self.parser.arg2()))
                 self.code_writer.asm_obj.write("\n")
+            vm_file_object.close()
         self.code_writer.close()
 
 
