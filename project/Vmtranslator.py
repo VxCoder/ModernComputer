@@ -21,7 +21,7 @@ class CommandType(IntEnum):
 class SegmentType(IntEnum):
     S_ARGUMENT = 1      # 函数参数
     S_LOCAL = 2         # 函数局部变量
-    S_STATIC = 3       # 同一vm文件所有函数共享的静态变量
+    S_STATIC = 3        # 同一vm文件所有函数共享的静态变量
     S_CONSTANT = 4      # 所有常数的伪段(0~32767)
     S_THIS = 5          # 通用段
     S_THAT = 6          # 通用段
