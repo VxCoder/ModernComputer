@@ -186,7 +186,6 @@ class Assembler:
 
     def first_assemble(self):
         """ 遍历发现符号，并赋予地址"""
-        print("gen symbol table")
         asm_object = open(self.asm_file)
         self.parser = Parser(asm_object)
         pc_count = 0
@@ -214,7 +213,6 @@ class Assembler:
         asm_object.close()
 
     def second_assemble(self):
-        print("gen hack file")
         asm_object = open(self.asm_file)
         self.parser = Parser(asm_object)
         hack_object = open(self.hack_file, "w")
