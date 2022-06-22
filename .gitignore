@@ -1,2 +1,3 @@
 nand2tetris/
 .idea/
+__pycache__/
